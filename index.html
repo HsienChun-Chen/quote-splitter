@@ -112,6 +112,7 @@ window.ASSETS = {
   .panel-hint { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
 
   .upload-zone {
+    display: block;
     border: 2px dashed var(--border);
     background: #FAF9F4;
     padding: 32px 20px;
@@ -329,10 +330,51 @@ window.ASSETS = {
     table.items .col-idx { width: 32px; }
     table.items .col-check { width: 28px; }
   }
+  #pw-overlay {
+    position: fixed; inset: 0;
+    background: #f4f6f9;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 999;
+  }
+  #pw-box {
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    padding: 32px 28px;
+    width: 100%; max-width: 340px;
+    text-align: center;
+  }
+  #pw-box h2 { font-size: 16px; color: #1a3a5c; margin-bottom: 20px; }
+  #pw-input {
+    width: 100%; padding: 10px 12px;
+    border: 1px solid #d0d7de; border-radius: 6px;
+    font-size: 15px; font-family: inherit;
+    margin-bottom: 12px; text-align: center; letter-spacing: 2px;
+  }
+  #pw-input:focus { outline: none; border-color: #1a3a5c; }
+  #pw-submit {
+    width: 100%; padding: 11px;
+    background: #1a3a5c; color: #fff;
+    border: none; border-radius: 6px;
+    font-size: 15px; font-weight: 700;
+    cursor: pointer; font-family: inherit;
+  }
+  #pw-submit:hover { background: #14304d; }
+  #pw-error { color: #c0392b; font-size: 13px; margin-top: 10px; min-height: 18px; }
 </style>
 </head>
 <body>
-<div class="container">
+
+<div id="pw-overlay">
+  <div id="pw-box">
+    <h2>請輸入密碼</h2>
+    <input type="password" id="pw-input" placeholder="••••••••" onkeydown="if(event.key==='Enter')checkPw()">
+    <button id="pw-submit" onclick="checkPw()">進入</button>
+    <p id="pw-error"></p>
+  </div>
+</div>
+
+<div class="container" id="main-content" style="display:none">
 
 <header>
   <h1>標單拆分 · 詢價單產生工具
@@ -1822,6 +1864,18 @@ async function buildDOCX(vendor, items) {
   return await Packer.toBlob(doc);
 }
 
+
+function checkPw() {
+  const val = document.getElementById('pw-input').value;
+  if (val === 'JRCIR90394080') {
+    document.getElementById('pw-overlay').style.display = 'none';
+    document.getElementById('main-content').style.display = 'block';
+  } else {
+    document.getElementById('pw-error').textContent = '密碼錯誤，請再試一次';
+    document.getElementById('pw-input').value = '';
+    document.getElementById('pw-input').focus();
+  }
+}
 </script>
 </body>
 </html>
