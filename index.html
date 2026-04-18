@@ -563,7 +563,6 @@ async function handleFile(file, forcedSheet){
   showMsg($("parse-msg"), "info", "解析中，請稍候…");
 
   try {
-    const ext = file.name.toLowerCase().split(".").pop();
     let parsed;
     if (ext === "xls" || ext === "xlsx") parsed = await parseExcel(file, forcedSheet);
     else if (ext === "pdf") parsed = await parsePDF(file);
