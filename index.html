@@ -398,6 +398,13 @@ window.ASSETS = {
   </label>
   <input type="file" id="file-input" accept=".xls,.xlsx,.pdf,.docx">
   <div id="parse-msg"></div>
+  <div id="sheet-picker" style="display:none; margin-top:12px; padding:12px; background:#F4F1E8; border:1px solid var(--border); border-radius:4px;">
+    <div style="font-size:13px; color:var(--text); margin-bottom:8px;">此檔案有多個工作表，請選擇要解析的工作表：</div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <select id="sheet-select" style="flex:1; padding:8px; border:1px solid var(--border); border-radius:4px; font-size:14px; font-family:inherit; background:white;"></select>
+      <button onclick="confirmSheetPick()" class="btn" style="white-space:nowrap;">確認解析</button>
+    </div>
+  </div>
 </section>
 
 <section class="panel hidden" id="panel-project">
@@ -480,7 +487,8 @@ const state = {
   project: { name: "", site: "", contact: "", tel: "", mail: "" },
   items: [],   // { kind, no, desc, unit, qty, note, section, subsection, vendor, selected }
   vendors: [], // { id, name, color }
-  rawFilename: ""
+  rawFilename: "",
+  pendingFile: null
 };
 
 const VENDOR_COLORS = ["#F8B500","#2563EB","#16A34A","#DC2626","#9333EA","#0891B2","#EA580C","#64748B"];
@@ -532,16 +540,32 @@ fileInput.addEventListener("change", ev=>{
   if (ev.target.files.length) handleFile(ev.target.files[0]);
 });
 
-async function handleFile(file){
+async function handleFile(file, forcedSheet){
   state.rawFilename = file.name.replace(/\.[^.]+$/, "");
   $("upload-text").textContent = `已選擇：${file.name}`;
   uploadZone.classList.add("has-file");
+  $("sheet-picker").style.display = "none";
+
+  const ext = file.name.toLowerCase().split(".").pop();
+  if ((ext === "xls" || ext === "xlsx") && !forcedSheet) {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array" });
+    if (wb.SheetNames.length > 1) {
+      state.pendingFile = file;
+      const sel = $("sheet-select");
+      sel.innerHTML = wb.SheetNames.map(n => `<option value="${n}">${n}</option>`).join("");
+      $("sheet-picker").style.display = "block";
+      showMsg($("parse-msg"), "info", "請選擇工作表後按「確認解析」");
+      return;
+    }
+  }
+
   showMsg($("parse-msg"), "info", "解析中，請稍候…");
 
   try {
     const ext = file.name.toLowerCase().split(".").pop();
     let parsed;
-    if (ext === "xls" || ext === "xlsx") parsed = await parseExcel(file);
+    if (ext === "xls" || ext === "xlsx") parsed = await parseExcel(file, forcedSheet);
     else if (ext === "pdf") parsed = await parsePDF(file);
     else if (ext === "docx") parsed = await parseDocx(file);
     else throw new Error(`不支援的檔案格式：.${ext}`);
@@ -573,12 +597,19 @@ async function handleFile(file){
   }
 }
 
+function confirmSheetPick(){
+  const sheetName = $("sheet-select").value;
+  $("sheet-picker").style.display = "none";
+  handleFile(state.pendingFile, sheetName);
+}
+
 /* Excel 解析 */
-async function parseExcel(file){
+async function parseExcel(file, forcedSheet){
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: "array" });
 
-  let sheetName = wb.SheetNames.find(n => n.includes("詳細"))
+  let sheetName = forcedSheet
+                || wb.SheetNames.find(n => n.includes("詳細"))
                 || wb.SheetNames.find(n => n.includes("標單"))
                 || wb.SheetNames[0];
   const sheet = wb.Sheets[sheetName];
