@@ -261,6 +261,9 @@ window.ASSETS = {
   table.items .col-check { padding-top: 10px; }
   table.items .col-vendor { padding-top: 6px; }
   table.items .desc { font-size: 13px; line-height: 1.4; overflow-wrap: break-word; word-break: break-word; }
+  table.items .desc[data-idx] { cursor: text; border-radius: 3px; }
+  table.items .desc[data-idx]:hover { background: rgba(0,0,0,0.04); }
+  table.items .desc-edit-input { width: 100%; font-size: 13px; line-height: 1.4; padding: 2px 4px; border: 1px solid var(--accent); border-radius: 3px; font-family: inherit; box-sizing: border-box; }
   table.items .note { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
   .output-summary {
@@ -1029,7 +1032,7 @@ function renderItems(){
       tr.innerHTML = `
         <td class="col-check"><input type="checkbox" class="row-check" data-idx="${idx}" ${it.selected?"checked":""}></td>
         <td class="col-idx">${it.no || itemCounter}</td>
-        <td><div class="desc">${escapeHtml(it.desc)}</div>
+        <td><div class="desc" data-idx="${idx}" title="雙擊可編輯名稱">${escapeHtml(it.desc)}</div>
             ${it.note ? `<div class="note">${escapeHtml(it.note)}</div>` : ""}</td>
         <td class="col-qty">${Number(it.qty).toLocaleString()}</td>
         <td class="col-unit">${escapeHtml(it.unit)}</td>
@@ -1057,6 +1060,35 @@ function renderItems(){
   tbody.querySelectorAll(".row-check").forEach(cb=>{
     cb.addEventListener("change", e=>{
       state.items[Number(e.target.dataset.idx)].selected = e.target.checked;
+    });
+  });
+  tbody.addEventListener("dblclick", e=>{
+    const div = e.target.closest(".desc[data-idx]");
+    if (!div) return;
+    const i = Number(div.dataset.idx);
+    const original = state.items[i].desc;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = original;
+    input.className = "desc-edit-input";
+    div.replaceWith(input);
+    input.focus();
+    input.select();
+    const commit = ()=>{
+      const newVal = input.value.trim() || original;
+      state.items[i].desc = newVal;
+      const newDiv = document.createElement("div");
+      newDiv.className = "desc";
+      newDiv.dataset.idx = String(i);
+      newDiv.title = "雙擊可編輯名稱";
+      newDiv.textContent = newVal;
+      input.replaceWith(newDiv);
+      saveSession();
+    };
+    input.addEventListener("blur", commit);
+    input.addEventListener("keydown", e=>{
+      if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+      if (e.key === "Escape") { state.items[i].desc = original; input.value = original; input.blur(); }
     });
   });
   updateStats();
