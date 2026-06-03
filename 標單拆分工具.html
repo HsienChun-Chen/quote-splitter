@@ -245,6 +245,7 @@ window.ASSETS = {
     font-size: 12px;
     padding: 4px 10px;
   }
+  table.items tr.item-row td { border-bottom: 1px solid #AAAAAA; border-right: none; }
   table.items tr.item-row:hover { background: #FFFCEE; }
   table.items tr.assigned:hover { filter: brightness(0.93); }
   table.items .col-idx { width: 50px; color: var(--muted); font-size: 12px; }
@@ -406,11 +407,14 @@ window.ASSETS = {
   <input type="file" id="file-input" accept=".xls,.xlsx,.pdf,.docx">
   <div id="parse-msg"></div>
   <div id="sheet-picker" style="display:none; margin-top:12px; padding:12px; background:#F4F1E8; border:1px solid var(--border); border-radius:4px;">
-    <div style="font-size:13px; color:var(--text); margin-bottom:8px;">此檔案有多個工作表，請選擇要解析的工作表：</div>
-    <div style="display:flex; gap:8px; align-items:center;">
-      <select id="sheet-select" style="flex:1; padding:8px; border:1px solid var(--border); border-radius:4px; font-size:14px; font-family:inherit; background:white;"></select>
-      <button onclick="confirmSheetPick()" class="btn" style="white-space:nowrap;">確認解析</button>
+    <div style="font-size:13px; color:var(--text); margin-bottom:8px;">此檔案有多個工作表，請選擇對應工作表：</div>
+    <div style="display:grid; grid-template-columns:auto 1fr; gap:6px 8px; align-items:center; margin-bottom:8px;">
+      <label style="font-size:13px; white-space:nowrap;">標單（主清單）</label>
+      <select id="sheet-select" style="padding:6px; border:1px solid var(--border); border-radius:4px; font-size:13px; font-family:inherit; background:white;"></select>
+      <label style="font-size:13px; white-space:nowrap;">單價分析表</label>
+      <select id="sheet-select-analysis" style="padding:6px; border:1px solid var(--border); border-radius:4px; font-size:13px; font-family:inherit; background:white;"></select>
     </div>
+    <button onclick="confirmSheetPick()" class="btn" style="white-space:nowrap;">確認解析</button>
   </div>
 </section>
 
@@ -500,7 +504,8 @@ const state = {
   items: [],   // { kind, no, desc, unit, qty, note, section, subsection, vendor, selected }
   vendors: [], // { id, name, color }
   rawFilename: "",
-  pendingFile: null
+  pendingFile: null,
+  unitPriceData: null  // { headers: [], rows: [] } — 來自標單的「單價分析表」Sheet
 };
 
 const VENDOR_COLORS = ["#F8B500","#2563EB","#16A34A","#DC2626","#9333EA","#0891B2","#EA580C","#64748B"];
@@ -564,7 +569,7 @@ fileInput.addEventListener("change", ev=>{
   if (ev.target.files.length) handleFile(ev.target.files[0]);
 });
 
-async function handleFile(file, forcedSheet, preCachedBuf){
+async function handleFile(file, forcedSheet, preCachedBuf, forcedAnalysisSheet){
   state.rawFilename = file.name.replace(/\.[^.]+$/, "");
   $("upload-text").textContent = `已選擇：${file.name}`;
   uploadZone.classList.add("has-file");
@@ -598,8 +603,12 @@ async function handleFile(file, forcedSheet, preCachedBuf){
       if (wb2.SheetNames.length > 1) {
         state.pendingFile = file;
         state.pendingBuf  = cachedBuf;
-        const sel = $("sheet-select");
-        sel.innerHTML = wb2.SheetNames.map(n => `<option value="${n}">${n}</option>`).join("");
+        const opts = wb2.SheetNames.map(n => `<option value="${n}">${n}</option>`).join("");
+        $("sheet-select").innerHTML = opts;
+        $("sheet-select-analysis").innerHTML = `<option value="">（無）</option>` + opts;
+        // 預設猜測：名稱含「單價分析」的 sheet 自動選到第二個 selector
+        const guessAnalysis = wb2.SheetNames.find(n => /單價分析/.test(n));
+        if (guessAnalysis) $("sheet-select-analysis").value = guessAnalysis;
         $("sheet-picker").style.display = "block";
         showMsg($("parse-msg"), "info", "請選擇工作表後按「確認解析」");
         return;
@@ -611,7 +620,7 @@ async function handleFile(file, forcedSheet, preCachedBuf){
 
   try {
     let parsed;
-    if (ext === "xls" || ext === "xlsx") parsed = await parseExcel(file, forcedSheet, cachedBuf);
+    if (ext === "xls" || ext === "xlsx") parsed = await parseExcel(file, forcedSheet, cachedBuf, forcedAnalysisSheet);
     else if (ext === "pdf") parsed = await parsePDF(file);
     else if (ext === "docx") parsed = await parseDocx(file);
     else throw new Error(`不支援的檔案格式：.${ext}`);
@@ -621,11 +630,13 @@ async function handleFile(file, forcedSheet, preCachedBuf){
 
     state.items = parsed.items.map((it,i)=>({ ...it, idx: i, vendor: "", selected: false }));
     Object.assign(state.project, parsed.project || {});
+    state.unitPriceData = parsed.unitPriceData || null;
 
     const itemCount = parsed.items.filter(x=>x.kind==="item").length;
     showMsg($("parse-msg"), "ok",
       `✓ 解析完成：擷取 ${itemCount} 個品項` +
-      (parsed.project?.name ? `　|　工程：${parsed.project.name}` : ""));
+      (parsed.project?.name ? `　|　工程：${parsed.project.name}` : "") +
+      (state.unitPriceData ? `　|　單價分析表 ${state.unitPriceData.rows.length} 列` : ""));
 
     fillProjectForm();
     show("panel-project");
@@ -646,12 +657,13 @@ async function handleFile(file, forcedSheet, preCachedBuf){
 
 function confirmSheetPick(){
   const sheetName = $("sheet-select").value;
+  const analysisSheet = $("sheet-select-analysis").value || null;
   $("sheet-picker").style.display = "none";
-  handleFile(state.pendingFile, sheetName, state.pendingBuf);
+  handleFile(state.pendingFile, sheetName, state.pendingBuf, analysisSheet);
 }
 
 /* Excel 解析 */
-async function parseExcel(file, forcedSheet, cachedBuf){
+async function parseExcel(file, forcedSheet, cachedBuf, analysisSheetName){
   console.log("[debug] parseExcel start, hasCachedBuf=", !!cachedBuf);
   const buf = cachedBuf || await readFileAsArrayBuffer(file);
   console.log("[debug] parseExcel buf ready, byteLength=", buf.byteLength);
@@ -743,7 +755,31 @@ async function parseExcel(file, forcedSheet, cachedBuf){
       subsection: currentSubsection
     });
   }
-  return { project, items };
+  // 解析使用者指定的「單價分析表」Sheet
+  let unitPriceData = null;
+  if (analysisSheetName && analysisSheetName !== sheetName) {
+    try {
+      const aSheet = wb.Sheets[analysisSheetName];
+      const aRows = XLSX.utils.sheet_to_json(aSheet, { header: 1, defval: null });
+      let aHeaderRow = -1;
+      for (let i = 0; i < Math.min(20, aRows.length); i++) {
+        const joined = (aRows[i] || []).map(c => String(c ?? "")).join("|");
+        if (/項\s*次/.test(joined) && /單\s*位/.test(joined)) { aHeaderRow = i; break; }
+      }
+      if (aHeaderRow >= 0) {
+        const rawHeaders = aRows[aHeaderRow];
+        const headers = rawHeaders.map(h => String(h ?? "").trim());
+        const dataRows = [];
+        for (let i = aHeaderRow + 1; i < aRows.length; i++) {
+          const r = aRows[i] || [];
+          if (r.every(c => c === null || c === undefined || c === "")) continue;
+          dataRows.push(r.map(c => (c === null || c === undefined) ? "" : c));
+        }
+        if (dataRows.length > 0) unitPriceData = { headers, rows: dataRows };
+      }
+    } catch(e) { console.warn("單價分析表解析失敗:", e); }
+  }
+  return { project, items, unitPriceData };
 }
 
 /* PDF 解析 */
@@ -1033,7 +1069,7 @@ function renderItems(){
         <td class="col-check"><input type="checkbox" class="row-check" data-idx="${idx}" ${it.selected?"checked":""}></td>
         <td class="col-idx">${it.no || itemCounter}</td>
         <td><div class="desc" data-idx="${idx}" title="雙擊可編輯名稱">${escapeHtml(it.desc)}</div>
-            ${it.note ? `<div class="note">${escapeHtml(it.note)}</div>` : ""}</td>
+            <div class="note" data-note-idx="${idx}" title="雙擊可編輯備註">${escapeHtml(it.note || "")}</div></td>
         <td class="col-qty">${Number(it.qty).toLocaleString()}</td>
         <td class="col-unit">${escapeHtml(it.unit)}</td>
         <td class="col-vendor">
@@ -1060,35 +1096,6 @@ function renderItems(){
   tbody.querySelectorAll(".row-check").forEach(cb=>{
     cb.addEventListener("change", e=>{
       state.items[Number(e.target.dataset.idx)].selected = e.target.checked;
-    });
-  });
-  tbody.addEventListener("dblclick", e=>{
-    const div = e.target.closest(".desc[data-idx]");
-    if (!div) return;
-    const i = Number(div.dataset.idx);
-    const original = state.items[i].desc;
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = original;
-    input.className = "desc-edit-input";
-    div.replaceWith(input);
-    input.focus();
-    input.select();
-    const commit = ()=>{
-      const newVal = input.value.trim() || original;
-      state.items[i].desc = newVal;
-      const newDiv = document.createElement("div");
-      newDiv.className = "desc";
-      newDiv.dataset.idx = String(i);
-      newDiv.title = "雙擊可編輯名稱";
-      newDiv.textContent = newVal;
-      input.replaceWith(newDiv);
-      saveSession();
-    };
-    input.addEventListener("blur", commit);
-    input.addEventListener("keydown", e=>{
-      if (e.key === "Enter") { e.preventDefault(); input.blur(); }
-      if (e.key === "Escape") { state.items[i].desc = original; input.value = original; input.blur(); }
     });
   });
   updateStats();
@@ -1267,6 +1274,71 @@ function getVendorItems(vendorId) {
   return result;
 }
 
+/**
+ * 從單價分析表中取出屬於指定廠商的各主項目區段
+ * 回傳：[{ no, desc, subRows:[{desc,qty,unit,unitPrice,total}] }, ...]
+ */
+function getVendorUnitPriceSections(vendorId) {
+  if (!state.unitPriceData) return null;
+  const { headers, rows } = state.unitPriceData;
+
+  // 廠商被分配的品項（含描述，供標題使用）
+  const vendorItems = state.items
+    .filter(it => it.kind === "item" && it.vendor === vendorId && it.no)
+    .map(it => ({ no: String(it.no).trim(), desc: it.desc }));
+  if (vendorItems.length === 0) return null;
+  const vendorItemNos = new Map(vendorItems.map(it => [it.no, it.desc]));
+
+  // 欄位偵測
+  const col = (regex) => headers.findIndex(h => regex.test(h));
+  const colNo    = col(/項\s*次/);
+  const colDesc  = col(/名\s*稱|工\s*作.*項\s*目|項\s*目|說\s*明/);
+  const colQty   = col(/數\s*量/);
+  const colUnit  = col(/單\s*位/);
+  const colPrice = col(/單\s*價/);
+  const colTotal = col(/複\s*價/);
+
+  const get = (row, idx) => idx >= 0 ? (row[idx] ?? "") : "";
+
+  const sections = [];
+  let cur = null;
+
+  for (const row of rows) {
+    const cellNo = String(get(row, colNo)).trim();
+    const baseNo = cellNo.split(/[-\.]/)[0];
+
+    if (cellNo && vendorItemNos.has(cellNo)) {
+      // 主項次列 → 新區段，標題取自主清單的品項描述
+      cur = { no: cellNo, desc: vendorItemNos.get(cellNo), subRows: [] };
+      sections.push(cur);
+    } else if (cellNo && vendorItemNos.has(baseNo) && cur) {
+      // 子項次（如 "1-1"）→ 歸屬目前區段
+      cur.subRows.push({
+        desc: String(get(row, colDesc)).trim(),
+        qty:  get(row, colQty),
+        unit: String(get(row, colUnit)).trim(),
+        unitPrice: get(row, colPrice),
+        total:     get(row, colTotal)
+      });
+    } else if (!cellNo && cur) {
+      // 空項次的從屬行
+      const desc = String(get(row, colDesc)).trim();
+      const qty  = get(row, colQty);
+      if (desc || qty !== "") {
+        cur.subRows.push({
+          desc, qty, unit: String(get(row, colUnit)).trim(),
+          unitPrice: get(row, colPrice),
+          total:     get(row, colTotal)
+        });
+      }
+    } else if (cellNo) {
+      cur = null; // 遇到非本廠商的項次，結束追蹤
+    }
+  }
+
+  return sections.filter(s => s.subRows.length > 0);
+}
+
 /* -----------------------
    產出 XLSX (使用範本注入)
 ----------------------- */
@@ -1276,24 +1348,28 @@ async function buildXLSX(vendor, items) {
   const SHEET_CAPACITY = 15;
   const pages = splitItemsIntoPages(items, SHEET_CAPACITY);
   
+  const upr = getVendorUnitPriceSections(vendor.id);
+
   // 只有一頁：回傳單一 Blob
   if (pages.length === 1) {
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(templateBuffer);
     const sheet = wb.worksheets[0];
     fillSheet(sheet, pages[0], vendor, state.project, 1, 1);
+    if (upr && upr.length > 0) appendUnitPriceTable(sheet, upr);
     sheet.name = `報價單`.substring(0, 30);
     const buf = await wb.xlsx.writeBuffer();
     return [{ suffix: "", blob: new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }) }];
   }
-  
-  // 多頁：回傳多個 Blob（每頁一個檔案）
+
+  // 多頁：回傳多個 Blob（每頁一個檔案，單價分析表附在最後一頁）
   const blobs = [];
   for (let p = 0; p < pages.length; p++) {
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(templateBuffer);
     const sheet = wb.worksheets[0];
     fillSheet(sheet, pages[p], vendor, state.project, p + 1, pages.length);
+    if (upr && upr.length > 0 && p === pages.length - 1) appendUnitPriceTable(sheet, upr);
     sheet.name = `報價單_P${p+1}`.substring(0, 30);
     const buf = await wb.xlsx.writeBuffer();
     blobs.push({
@@ -1517,6 +1593,117 @@ function fillSheet(sheet, items, vendor, project, pageNum, totalPages) {
   }
 }
 
+
+/**
+ * 將欄位 1-based index 轉成字母（1=A, 2=B, 27=AA ...）
+ */
+function colIndexToLetter(n) {
+  let result = "";
+  while (n > 0) {
+    result = String.fromCharCode(65 + (n - 1) % 26) + result;
+    n = Math.floor((n - 1) / 26);
+  }
+  return result;
+}
+
+/**
+ * 在詢價單下方（row 50 起）追加格式化單價分析表
+ * 每個主項目：大標題 + 4 欄子項明細（名稱 | 數量 | 單價 | 複價）
+ */
+function appendUnitPriceTable(sheet, sections) {
+  // 欄位配置：B:F = 名稱（合併）、G = 數量、H = 單價、I = 複價
+  const THIN = { style: "thin", color: { argb: "FF000000" } };
+  const MED  = { style: "medium", color: { argb: "FF000000" } };
+  const font = (bold, size) => ({ name: "Noto Sans TC DemiLight", bold, size });
+
+  const setCell = (sheet, ref, value, opts = {}) => {
+    const cell = typeof ref === "string" ? sheet.getCell(ref) : sheet.getCell(ref[0], ref[1]);
+    cell.value = value;
+    if (opts.font)      cell.font      = opts.font;
+    if (opts.fill)      cell.fill      = opts.fill;
+    if (opts.border)    cell.border    = opts.border;
+    if (opts.alignment) cell.alignment = opts.alignment;
+  };
+
+  let r = 50;
+
+  for (const section of sections) {
+    // ── 主標題：「單價分析表 - 品項描述」 ──
+    try { sheet.mergeCells(`B${r}:I${r}`); } catch(e) {}
+    setCell(sheet, `B${r}`, `單價分析表 - ${section.desc}`, {
+      font:      font(true, 11),
+      fill:      { type: "pattern", pattern: "solid", fgColor: { argb: "FFD9D9D9" } },
+      border:    { top: MED, bottom: MED, left: MED, right: MED },
+      alignment: { horizontal: "left", vertical: "center", indent: 1 }
+    });
+    sheet.getRow(r).height = 24;
+    r++;
+
+    // ── 欄標題行 ──
+    try { sheet.mergeCells(`B${r}:F${r}`); } catch(e) {}
+    const hdrBorder = { top: THIN, bottom: THIN, left: THIN, right: THIN };
+    const hdrFill   = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8E8E8" } };
+    const hdrFont   = font(true, 10);
+    for (const [ref, label, align] of [
+      [`B${r}`, "名稱",  "center"],
+      [`G${r}`, "數量",  "center"],
+      [`H${r}`, "單價",  "center"],
+      [`I${r}`, "複價",  "center"]
+    ]) {
+      setCell(sheet, ref, label, {
+        font: hdrFont, fill: hdrFill, border: hdrBorder,
+        alignment: { horizontal: align, vertical: "center" }
+      });
+    }
+    sheet.getRow(r).height = 18;
+    r++;
+
+    // ── 子項資料行 ──
+    for (const sub of section.subRows) {
+      try { sheet.mergeCells(`B${r}:F${r}`); } catch(e) {}
+      const rowBorder = { top: THIN, bottom: THIN, left: THIN, right: THIN };
+
+      // 名稱
+      setCell(sheet, `B${r}`, sub.desc || null, {
+        font: font(false, 9), border: rowBorder,
+        alignment: { vertical: "center", wrapText: true }
+      });
+
+      // 數量（數字 + 單位合併成字串）
+      const qty = sub.qty !== "" && sub.qty !== null ? Number(sub.qty) : null;
+      const qtyStr = qty !== null ? `${qty}${sub.unit ? " " + sub.unit : ""}` : (sub.unit || null);
+      setCell(sheet, `G${r}`, qtyStr, {
+        font: font(false, 9), border: rowBorder,
+        alignment: { horizontal: "right", vertical: "center" }
+      });
+
+      // 單價
+      const up = sub.unitPrice !== "" && sub.unitPrice !== null ? Number(sub.unitPrice) : null;
+      setCell(sheet, `H${r}`, up !== null && !isNaN(up) ? up : (sub.unitPrice || null), {
+        font: font(false, 9), border: rowBorder,
+        alignment: { horizontal: "right", vertical: "center" }
+      });
+
+      // 複價
+      const tot = sub.total !== "" && sub.total !== null ? Number(sub.total) : null;
+      setCell(sheet, `I${r}`, tot !== null && !isNaN(tot) ? tot : (sub.total || null), {
+        font: font(false, 9), border: rowBorder,
+        alignment: { horizontal: "right", vertical: "center" }
+      });
+
+      sheet.getRow(r).height = 18;
+      r++;
+    }
+    r++; // 區段間空一行
+  }
+
+  try {
+    sheet.pageSetup.printArea = `B2:I${r - 1}`;
+    sheet.pageSetup.fitToPage = true;
+    sheet.pageSetup.fitToWidth = 1;
+    sheet.pageSetup.fitToHeight = 0;
+  } catch(e) {}
+}
 
 /**
  * 找出某個儲存格所在的合併範圍
@@ -1853,6 +2040,13 @@ async function renderQuotePage(vendor, project, items, pageNum, totalPages) {
         cx += c.w;
       });
       ctx.textAlign = "left";
+      // 項目列底線
+      ctx.strokeStyle = "#000000";
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(tableX, y + rowH);
+      ctx.lineTo(tableX + tableW, y + rowH);
+      ctx.stroke();
     }
     y += rowH;
   });
@@ -2090,6 +2284,69 @@ async function buildDOCX(vendor, items) {
   return await Packer.toBlob(doc);
 }
 
+
+// 說明／備註行內編輯（只綁一次，用事件委派）
+$("items-tbody").addEventListener("dblclick", e=>{
+  const descDiv = e.target.closest(".desc[data-idx]");
+  const noteDiv = e.target.closest(".note[data-note-idx]");
+  if (!descDiv && !noteDiv) return;
+
+  if (descDiv) {
+    const i = Number(descDiv.dataset.idx);
+    const original = state.items[i].desc;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = original;
+    input.className = "desc-edit-input";
+    descDiv.replaceWith(input);
+    input.focus();
+    input.select();
+    const commit = ()=>{
+      const newVal = input.value.trim() || original;
+      state.items[i].desc = newVal;
+      const newDiv = document.createElement("div");
+      newDiv.className = "desc";
+      newDiv.dataset.idx = String(i);
+      newDiv.title = "雙擊可編輯名稱";
+      newDiv.textContent = newVal;
+      input.replaceWith(newDiv);
+      saveSession();
+    };
+    input.addEventListener("blur", commit);
+    input.addEventListener("keydown", ev=>{
+      if (ev.key === "Enter") { ev.preventDefault(); input.blur(); }
+      if (ev.key === "Escape") { state.items[i].desc = original; input.value = original; input.blur(); }
+    });
+  }
+
+  if (noteDiv) {
+    const i = Number(noteDiv.dataset.noteIdx);
+    const original = state.items[i].note || "";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = original;
+    input.className = "desc-edit-input";
+    noteDiv.replaceWith(input);
+    input.focus();
+    input.select();
+    const commit = ()=>{
+      const newVal = input.value.trim();
+      state.items[i].note = newVal;
+      const newDiv = document.createElement("div");
+      newDiv.className = "note";
+      newDiv.dataset.noteIdx = String(i);
+      newDiv.title = "雙擊可編輯備註";
+      newDiv.textContent = newVal;
+      input.replaceWith(newDiv);
+      saveSession();
+    };
+    input.addEventListener("blur", commit);
+    input.addEventListener("keydown", ev=>{
+      if (ev.key === "Enter") { ev.preventDefault(); input.blur(); }
+      if (ev.key === "Escape") { state.items[i].note = original; input.value = original; input.blur(); }
+    });
+  }
+});
 
 function checkPw() {
   const val = document.getElementById('pw-input').value;

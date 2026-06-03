@@ -245,6 +245,7 @@ window.ASSETS = {
     font-size: 12px;
     padding: 4px 10px;
   }
+  table.items tr.item-row td { border-bottom: 1px solid #AAAAAA; border-right: none; }
   table.items tr.item-row:hover { background: #FFFCEE; }
   table.items tr.assigned:hover { filter: brightness(0.93); }
   table.items .col-idx { width: 50px; color: var(--muted); font-size: 12px; }
@@ -1033,7 +1034,7 @@ function renderItems(){
         <td class="col-check"><input type="checkbox" class="row-check" data-idx="${idx}" ${it.selected?"checked":""}></td>
         <td class="col-idx">${it.no || itemCounter}</td>
         <td><div class="desc" data-idx="${idx}" title="雙擊可編輯名稱">${escapeHtml(it.desc)}</div>
-            ${it.note ? `<div class="note">${escapeHtml(it.note)}</div>` : ""}</td>
+            <div class="note" data-note-idx="${idx}" title="雙擊可編輯備註">${escapeHtml(it.note || "")}</div></td>
         <td class="col-qty">${Number(it.qty).toLocaleString()}</td>
         <td class="col-unit">${escapeHtml(it.unit)}</td>
         <td class="col-vendor">
@@ -1060,35 +1061,6 @@ function renderItems(){
   tbody.querySelectorAll(".row-check").forEach(cb=>{
     cb.addEventListener("change", e=>{
       state.items[Number(e.target.dataset.idx)].selected = e.target.checked;
-    });
-  });
-  tbody.addEventListener("dblclick", e=>{
-    const div = e.target.closest(".desc[data-idx]");
-    if (!div) return;
-    const i = Number(div.dataset.idx);
-    const original = state.items[i].desc;
-    const input = document.createElement("input");
-    input.type = "text";
-    input.value = original;
-    input.className = "desc-edit-input";
-    div.replaceWith(input);
-    input.focus();
-    input.select();
-    const commit = ()=>{
-      const newVal = input.value.trim() || original;
-      state.items[i].desc = newVal;
-      const newDiv = document.createElement("div");
-      newDiv.className = "desc";
-      newDiv.dataset.idx = String(i);
-      newDiv.title = "雙擊可編輯名稱";
-      newDiv.textContent = newVal;
-      input.replaceWith(newDiv);
-      saveSession();
-    };
-    input.addEventListener("blur", commit);
-    input.addEventListener("keydown", e=>{
-      if (e.key === "Enter") { e.preventDefault(); input.blur(); }
-      if (e.key === "Escape") { state.items[i].desc = original; input.value = original; input.blur(); }
     });
   });
   updateStats();
@@ -1853,6 +1825,13 @@ async function renderQuotePage(vendor, project, items, pageNum, totalPages) {
         cx += c.w;
       });
       ctx.textAlign = "left";
+      // 項目列底線
+      ctx.strokeStyle = "#000000";
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(tableX, y + rowH);
+      ctx.lineTo(tableX + tableW, y + rowH);
+      ctx.stroke();
     }
     y += rowH;
   });
@@ -2090,6 +2069,69 @@ async function buildDOCX(vendor, items) {
   return await Packer.toBlob(doc);
 }
 
+
+// 說明／備註行內編輯（只綁一次，用事件委派）
+$("items-tbody").addEventListener("dblclick", e=>{
+  const descDiv = e.target.closest(".desc[data-idx]");
+  const noteDiv = e.target.closest(".note[data-note-idx]");
+  if (!descDiv && !noteDiv) return;
+
+  if (descDiv) {
+    const i = Number(descDiv.dataset.idx);
+    const original = state.items[i].desc;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = original;
+    input.className = "desc-edit-input";
+    descDiv.replaceWith(input);
+    input.focus();
+    input.select();
+    const commit = ()=>{
+      const newVal = input.value.trim() || original;
+      state.items[i].desc = newVal;
+      const newDiv = document.createElement("div");
+      newDiv.className = "desc";
+      newDiv.dataset.idx = String(i);
+      newDiv.title = "雙擊可編輯名稱";
+      newDiv.textContent = newVal;
+      input.replaceWith(newDiv);
+      saveSession();
+    };
+    input.addEventListener("blur", commit);
+    input.addEventListener("keydown", ev=>{
+      if (ev.key === "Enter") { ev.preventDefault(); input.blur(); }
+      if (ev.key === "Escape") { state.items[i].desc = original; input.value = original; input.blur(); }
+    });
+  }
+
+  if (noteDiv) {
+    const i = Number(noteDiv.dataset.noteIdx);
+    const original = state.items[i].note || "";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = original;
+    input.className = "desc-edit-input";
+    noteDiv.replaceWith(input);
+    input.focus();
+    input.select();
+    const commit = ()=>{
+      const newVal = input.value.trim();
+      state.items[i].note = newVal;
+      const newDiv = document.createElement("div");
+      newDiv.className = "note";
+      newDiv.dataset.noteIdx = String(i);
+      newDiv.title = "雙擊可編輯備註";
+      newDiv.textContent = newVal;
+      input.replaceWith(newDiv);
+      saveSession();
+    };
+    input.addEventListener("blur", commit);
+    input.addEventListener("keydown", ev=>{
+      if (ev.key === "Enter") { ev.preventDefault(); input.blur(); }
+      if (ev.key === "Escape") { state.items[i].note = original; input.value = original; input.blur(); }
+    });
+  }
+});
 
 function checkPw() {
   const val = document.getElementById('pw-input').value;
