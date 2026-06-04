@@ -1135,7 +1135,9 @@ $("bulk-assign").addEventListener("click", ()=>{
   state.items.forEach(it=>{
     if (it.kind === "item" && it.selected) { it.vendor = vid; count++; }
   });
-  if (count === 0) alert("請先勾選要指派的品項");
+  if (count === 0) { alert("請先勾選要指派的品項"); return; }
+  state.items.forEach(it => { it.selected = false; });
+  $("head-check").checked = false;
   renderItems(); renderOutputSummary();
 });
 
@@ -1870,8 +1872,8 @@ async function buildPDF(vendor, items) {
   for (let p = 0; p < pages.length; p++) {
     if (p > 0) pdf.addPage();
     const canvas = await renderQuotePage(vendor, state.project, pages[p], p+1, pages.length);
-    const imgData = canvas.toDataURL("image/png");
-    pdf.addImage(imgData, "PNG", 0, 0, W, H);
+    const imgData = canvas.toDataURL("image/jpeg", 0.85);
+    pdf.addImage(imgData, "JPEG", 0, 0, W, H);
   }
   
   return new Blob([pdf.output("arraybuffer")], { type: "application/pdf" });
@@ -1882,7 +1884,7 @@ async function buildPDF(vendor, items) {
  */
 async function renderQuotePage(vendor, project, items, pageNum, totalPages) {
   const W = 595, H = 842; // A4 pt
-  const scale = 3; // 3x 解析度給 PDF 高畫質
+  const scale = 2; // 2x 解析度（品質與檔案大小平衡）
   const canvas = document.createElement("canvas");
   canvas.width = W * scale;
   canvas.height = H * scale;
